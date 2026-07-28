@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BRM App</title>
+  <link rel="manifest" href="manifest.json">
+  <!-- Tailwind CSS（爆速スタイリング） -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Dexie.js（IndexedDBを超扱いやすくするライブラリ） -->
+  <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+</head>
+<body class="bg-slate-900 text-white min-h-screen p-4 pb-20">
+
+  <!-- ヘッダー：総資産表示 -->
+  <div class="bg-slate-800 rounded-2xl p-5 mb-6 border border-slate-700 shadow-lg">
+    <p class="text-xs text-slate-400 font-bold mb-1">TOTAL BANKROLL (JPY換算)</p>
+    <h1 id="total-jpy" class="text-3xl font-black text-emerald-400">¥0</h1>
+    <div class="flex justify-between mt-4 text-xs text-slate-300 border-t border-slate-700 pt-3">
+      <span>KRW: <b id="bal-krw">0</b> ₩</span>
+      <span>JPY: <b id="bal-jpy">400,000</b> ¥</span>
+    </div>
+  </div>
+
+  <!-- ログ入力フォーム -->
+  <div class="bg-slate-800 rounded-2xl p-5 border border-slate-700 shadow-lg mb-6">
+    <h2 class="text-lg font-bold mb-4 text-slate-200">ポーカーログ入力</h2>
+    <form id="poker-form" class="space-y-4">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">種別</label>
+        <select id="type" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm">
+          <option value="Cash">Cash (1k/3k)</option>
+          <option value="MTT">MTT (APPT Satty等)</option>
+        </select>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">バイイン (KRW)</label>
+          <input type="number" id="buyin" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm" placeholder="80000" required>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">回収額 (KRW)</label>
+          <input type="number" id="cashout" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm" placeholder="0" required>
+        </div>
+      </div>
+      <button type="submit" class="w-full bg-emerald-500 hover:bg-emerald-600 font-bold p-3 rounded-lg text-slate-950 transition">
+        記録を保存する
+      </button>
+    </form>
+  </div>
+
+  <!-- 履歴リスト -->
+  <div class="bg-slate-800 rounded-2xl p-5 border border-slate-700">
+    <h2 class="text-lg font-bold mb-3 text-slate-200">直近のセッション</h2>
+    <div id="log-list" class="space-y-2 text-sm"></div>
+  </div>
+
+  <script>
+    // 1. IndexedDBの初期化 (Dexie)
+    const db = new Dexie("BRM_Database");
+    db.version(1).stores({
+      poker_logs: '++id, date, type, buyin, cashout, profit'
+    });
+
+    // 2. ログ保存処理
+    document.getElementById('poker-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const type = document.getElementById('type').value;
+      const buyin = Number(document.getElementById('buyin').value);
+      const cashout = Number(document.getElementById('cashout').value);
+      const profit = cashout - buyin;
+
+      await db.poker_logs.add({
+        date: new Date().toISOString(),
+        type, buyin, cashout, profit
+      });
+
+      e.target.reset();
+      renderLogs();
+    });
+
+    // 3. ログの描画 & 集計
+    async function renderLogs() {
+      const logs = await db.poker_logs.reverse().toArray();
+      const listEl = document.getElementById('log-list');
+      listEl.innerHTML = '';
+
+      let totalProfitKRW = 0;
+      logs.forEach(log => {
+        totalProfitKRW += log.profit;
+        const color = log.profit >= 0 ? 'text-emerald-400' : 'text-rose-400';
+        listEl.innerHTML += `
+          <div class="flex justify-between border-b border-slate-700/50 pb-2">
+            <span>${log.type}</span>
+            <span class="${color} font-bold">${log.profit > 0 ? '+' : ''}${log.profit.toLocaleString()} ₩</span>
+          </div>`;
+      });
+
+      document.getElementById('bal-krw').innerText = totalProfitKRW.toLocaleString();
+    }
+
+    renderLogs();
+
+    // Service Workerの登録
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
