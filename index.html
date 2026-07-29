@@ -5,105 +5,663 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BRM App</title>
   <link rel="manifest" href="manifest.json">
-  <!-- Tailwind CSS（爆速スタイリング） -->
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Dexie.js（IndexedDBを超扱いやすくするライブラリ） -->
+  <!-- Dexie.js (IndexedDB) -->
   <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+  <!-- Chart.js (グラフ描画) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
-<body class="bg-slate-900 text-white min-h-screen p-4 pb-20">
+<body class="bg-slate-900 text-white min-h-screen p-4 pb-20 font-sans">
 
-  <!-- ヘッダー：総資産表示 -->
-  <div class="bg-slate-800 rounded-2xl p-5 mb-6 border border-slate-700 shadow-lg">
-    <p class="text-xs text-slate-400 font-bold mb-1">TOTAL BANKROLL (JPY換算)</p>
-    <h1 id="total-jpy" class="text-3xl font-black text-emerald-400">¥0</h1>
-    <div class="flex justify-between mt-4 text-xs text-slate-300 border-t border-slate-700 pt-3">
-      <span>KRW: <b id="bal-krw">0</b> ₩</span>
-      <span>JPY: <b id="bal-jpy">400,000</b> ¥</span>
+  <!-- ヘッダー：各通貨の個別保有残高 -->
+  <div class="mb-6">
+    <h1 class="text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">保有通貨残高</h1>
+    <div class="grid grid-cols-3 gap-3">
+      <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 shadow text-center">
+        <span class="text-xs text-slate-400 block">JPY</span>
+        <span id="bal-jpy" class="text-lg font-black text-emerald-400">¥0</span>
+      </div>
+      <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 shadow text-center">
+        <span class="text-xs text-slate-400 block">KRW</span>
+        <span id="bal-krw" class="text-lg font-black text-cyan-400">₩0</span>
+      </div>
+      <div class="bg-slate-800 p-3 rounded-xl border border-slate-700 shadow text-center">
+        <span class="text-xs text-slate-400 block">USD</span>
+        <span id="bal-usd" class="text-lg font-black text-amber-400">$0</span>
+      </div>
     </div>
   </div>
 
-  <!-- ログ入力フォーム -->
-  <div class="bg-slate-800 rounded-2xl p-5 border border-slate-700 shadow-lg mb-6">
-    <h2 class="text-lg font-bold mb-4 text-slate-200">ポーカーログ入力</h2>
-    <form id="poker-form" class="space-y-4">
+  <!-- 旅の選択 ＆ アクションエリア -->
+  <div class="bg-slate-800 rounded-2xl p-4 border border-slate-700 shadow-lg mb-6">
+    <div class="flex items-center justify-between mb-3">
+      <label class="text-xs font-bold text-slate-300">現在の旅 / 使用通貨</label>
+      <button onclick="openNewTripModal()" class="text-xs text-indigo-400 hover:text-indigo-300 font-bold">+ 新しい旅を追加</button>
+    </div>
+    <div class="grid grid-cols-3 gap-2 mb-4">
+      <select id="current-trip-select" onchange="onTripChange()" class="col-span-2 bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm">
+        <!-- JSで動的生成 -->
+      </select>
+      <div id="current-currency-badge" class="bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm font-bold text-center text-slate-300 flex items-center justify-center">
+        ---
+      </div>
+    </div>
+
+    <!-- アクションボタン（ポップアップ起動） -->
+    <div class="grid grid-cols-2 gap-3">
+      <button onclick="openPokerLogModal()" class="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold p-3 rounded-xl text-sm transition shadow flex items-center justify-center gap-1">
+        <span>♠️ ポーカーログ入力</span>
+      </button>
+      <button onclick="openExchangeModal()" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold p-3 rounded-xl text-sm transition shadow flex items-center justify-center gap-1">
+        <span>💱 外貨両替記録</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- グラフゾーン -->
+  <div class="bg-slate-800 rounded-2xl p-4 border border-slate-700 shadow-lg mb-6">
+    <!-- タブ切り替えボタン -->
+    <div class="flex bg-slate-900 rounded-xl p-1 mb-4 border border-slate-700 text-xs">
+      <button id="tab-btn-jpy" onclick="switchGraphTab('jpy')" class="flex-1 py-2 rounded-lg font-bold transition text-slate-400">通算収支(JPY)</button>
+      <button id="tab-btn-trip" onclick="switchGraphTab('trip')" class="flex-1 py-2 rounded-lg font-bold transition text-slate-400">今旅の収支</button>
+      <button id="tab-btn-winrate" onclick="switchGraphTab('winrate')" class="flex-1 py-2 rounded-lg font-bold transition text-slate-400">Cash WinRate</button>
+    </div>
+    <div class="relative h-60 w-full">
+      <canvas id="mainChart"></canvas>
+    </div>
+  </div>
+
+  <!-- 直近のセッション（折りたたみ式） -->
+  <details open class="bg-slate-800 rounded-2xl border border-slate-700 shadow-lg mb-6 group">
+    <summary class="p-4 cursor-pointer font-bold text-slate-200 flex justify-between items-center select-none">
+      <span>直近のセッション</span>
+      <span class="text-xs text-slate-400 group-open:rotate-180 transition-transform">▼</span>
+    </summary>
+    <div class="px-4 pb-4 border-t border-slate-700/50 pt-3">
+      <div id="log-list" class="space-y-3 text-sm">
+        <!-- JSでログ生成 -->
+      </div>
+    </div>
+  </details>
+
+  <!-- 最下部：初期残高設定（折りたたみ式） -->
+  <details class="bg-slate-800/60 rounded-2xl border border-slate-700/60 shadow mb-6 group">
+    <summary class="p-4 cursor-pointer font-bold text-slate-400 text-sm flex justify-between items-center select-none">
+      <span>⚙️ 初期残高設定（手動変更）</span>
+      <span class="text-xs text-slate-400 group-open:rotate-180 transition-transform">▼</span>
+    </summary>
+    <div class="p-4 border-t border-slate-700/50 space-y-3 text-xs">
+      <div class="grid grid-cols-3 gap-2">
+        <div>
+          <label class="block text-slate-400 mb-1">初期 JPY (¥)</label>
+          <input type="number" id="init-jpy" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white">
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">初期 KRW (₩)</label>
+          <input type="number" id="init-krw" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white">
+        </div>
+        <div>
+          <label class="block text-slate-400 mb-1">初期 USD ($)</label>
+          <input type="number" id="init-usd" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white">
+        </div>
+      </div>
+      <button onclick="saveInitialBalances()" class="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold p-2 rounded-lg transition">初期残高を更新</button>
+    </div>
+  </details>
+
+
+  <!-- ==================== モーダル群 ==================== -->
+
+  <!-- 1. 新しい旅追加モーダル -->
+  <div id="modal-trip" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 w-full max-w-sm space-y-4 shadow-2xl">
+      <h3 class="text-lg font-bold">新しい旅を追加</h3>
       <div>
-        <label class="block text-xs text-slate-400 mb-1">種別</label>
-        <select id="type" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm">
-          <option value="Cash">Cash (1k/3k)</option>
-          <option value="MTT">MTT (APPT Satty等)</option>
+        <label class="block text-xs text-slate-400 mb-1">旅の名称 (自由記述)</label>
+        <input type="text" id="new-trip-name" placeholder="例: 2026年4月 マカオ遠征" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">使用通貨</label>
+        <select id="new-trip-currency" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm">
+          <option value="KRW">KRW (ウォン)</option>
+          <option value="JPY">JPY (円)</option>
+          <option value="USD">USD (ドル)</option>
         </select>
       </div>
+      <div class="flex gap-2">
+        <button onclick="closeModal('modal-trip')" class="flex-1 bg-slate-700 p-3 rounded-lg text-sm font-bold">キャンセル</button>
+        <button onclick="saveNewTrip()" class="flex-1 bg-indigo-600 p-3 rounded-lg text-sm font-bold">作成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. ポーカーログ入力/編集モーダル -->
+  <div id="modal-poker" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 w-full max-w-md space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+      <h3 id="poker-modal-title" class="text-lg font-bold">ポーカーログ入力</h3>
+      <input type="hidden" id="poker-edit-id" value="">
+      
+      <div class="text-xs text-slate-400 bg-slate-900/60 p-2.5 rounded-lg">
+        旅: <b id="modal-trip-label" class="text-white">---</b> | 
+        通貨: <b id="modal-currency-label" class="text-emerald-400">---</b>
+      </div>
+
       <div class="grid grid-cols-2 gap-3">
         <div>
-          <label class="block text-xs text-slate-400 mb-1">バイイン (KRW)</label>
-          <input type="number" id="buyin" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm" placeholder="80000" required>
+          <label class="block text-xs text-slate-400 mb-1">種別</label>
+          <select id="poker-type" onchange="toggleGameTypeFields()" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm">
+            <option value="Cash">Cash Game</option>
+            <option value="MTT">MTT</option>
+          </select>
         </div>
         <div>
-          <label class="block text-xs text-slate-400 mb-1">回収額 (KRW)</label>
-          <input type="number" id="cashout" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm" placeholder="0" required>
+          <label class="block text-xs text-slate-400 mb-1">プレイ時間 (時間)</label>
+          <input type="number" step="0.1" id="poker-hours" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm" placeholder="2.5" required>
         </div>
       </div>
-      <button type="submit" class="w-full bg-emerald-500 hover:bg-emerald-600 font-bold p-3 rounded-lg text-slate-950 transition">
-        記録を保存する
-      </button>
-    </form>
+
+      <!-- Cash用レート入力 -->
+      <div id="rate-inputs" class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">SB レート</label>
+          <input type="number" id="poker-sb" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm" placeholder="1000">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">BB レート</label>
+          <input type="number" id="poker-bb" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm" placeholder="2000">
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">バイイン</label>
+          <input type="number" id="poker-buyin" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm" placeholder="200000" required>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">回収額 (Cashout)</label>
+          <input type="number" id="poker-cashout" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-3 text-sm" placeholder="350000" required>
+        </div>
+      </div>
+
+      <div class="flex gap-2 pt-2">
+        <button onclick="closeModal('modal-poker')" class="flex-1 bg-slate-700 p-3 rounded-lg text-sm font-bold">キャンセル</button>
+        <button onclick="savePokerLog()" class="flex-1 bg-emerald-500 text-slate-950 p-3 rounded-lg text-sm font-bold">保存する</button>
+      </div>
+    </div>
   </div>
 
-  <!-- 履歴リスト -->
-  <div class="bg-slate-800 rounded-2xl p-5 border border-slate-700">
-    <h2 class="text-lg font-bold mb-3 text-slate-200">直近のセッション</h2>
-    <div id="log-list" class="space-y-2 text-sm"></div>
+  <!-- 3. 外貨両替記録モーダル -->
+  <div id="modal-exchange" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4 z-50">
+    <div class="bg-slate-800 border border-slate-700 rounded-2xl p-5 w-full max-w-md space-y-4 shadow-2xl">
+      <h3 class="text-lg font-bold">外貨両替を記録</h3>
+      
+      <div class="space-y-3">
+        <div class="p-3 bg-slate-900/80 rounded-xl border border-slate-700 space-y-2">
+          <span class="text-xs font-bold text-rose-400">渡したお金 (減算)</span>
+          <div class="grid grid-cols-2 gap-2">
+            <select id="ex-from-curr" class="bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm">
+              <option value="JPY">JPY (円)</option>
+              <option value="KRW">KRW (ウォン)</option>
+              <option value="USD">USD (ドル)</option>
+            </select>
+            <input type="number" id="ex-from-amount" placeholder="金額 (例: 10000)" class="bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm">
+          </div>
+        </div>
+
+        <div class="text-center text-slate-500 font-bold">⬇️</div>
+
+        <div class="p-3 bg-slate-900/80 rounded-xl border border-slate-700 space-y-2">
+          <span class="text-xs font-bold text-emerald-400">受け取ったお金 (加算)</span>
+          <div class="grid grid-cols-2 gap-2">
+            <select id="ex-to-curr" class="bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm">
+              <option value="KRW">KRW (ウォン)</option>
+              <option value="JPY">JPY (円)</option>
+              <option value="USD">USD (ドル)</option>
+            </select>
+            <input type="number" id="ex-to-amount" placeholder="金額 (例: 90000)" class="bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm">
+          </div>
+        </div>
+      </div>
+
+      <div class="flex gap-2 pt-2">
+        <button onclick="closeModal('modal-exchange')" class="flex-1 bg-slate-700 p-3 rounded-lg text-sm font-bold">キャンセル</button>
+        <button onclick="saveExchangeLog()" class="flex-1 bg-indigo-600 p-3 rounded-lg text-sm font-bold">両替を保存</button>
+      </div>
+    </div>
   </div>
 
+
+  <!-- ==================== JavaScript ロジック ==================== -->
   <script>
-    // 1. IndexedDBの初期化 (Dexie)
-    const db = new Dexie("BRM_Database");
+    // 1. Dexie DB 初期化
+    const db = new Dexie("BRM_Database_v2");
     db.version(1).stores({
-      poker_logs: '++id, date, type, buyin, cashout, profit'
+      trips: '++id, name, currency',
+      poker_logs: '++id, tripId, date, type, hours, sb, bb, buyin, cashout, profit, winRate, currency',
+      exchanges: '++id, date, fromCurr, fromAmount, toCurr, toAmount',
+      settings: 'key, value'
     });
 
-    // 2. ログ保存処理
-    document.getElementById('poker-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const type = document.getElementById('type').value;
-      const buyin = Number(document.getElementById('buyin').value);
-      const cashout = Number(document.getElementById('cashout').value);
+    let activeChartTab = 'jpy';
+    let chartInstance = null;
+
+    // アプリ起動時の初期化
+    window.addEventListener('DOMContentLoaded', async () => {
+      await initDefaultData();
+      await loadTripsSelect();
+      await loadInitialSettingsInputs();
+      await renderAll();
+    });
+
+    // 初期データの挿入（初回のみ）
+    async function initDefaultData() {
+      const tripCount = await db.trips.count();
+      if (tripCount === 0) {
+        await db.trips.add({ name: "韓国遠征", currency: "KRW" });
+      }
+      const initJpy = await db.settings.get('init_jpy');
+      if (!initJpy) {
+        await db.settings.put({ key: 'init_jpy', value: 400000 });
+        await db.settings.put({ key: 'init_krw', value: 0 });
+        await db.settings.put({ key: 'init_usd', value: 0 });
+      }
+    }
+
+    // 旅ドロップダウンの更新
+    async function loadTripsSelect() {
+      const trips = await db.trips.toArray();
+      const select = document.getElementById('current-trip-select');
+      select.innerHTML = '';
+      trips.forEach(t => {
+        select.innerHTML += `<option value="${t.id}">${t.name}</option>`;
+      });
+      if (trips.length > 0) {
+        select.value = trips[0].id;
+      }
+      await onTripChange();
+    }
+
+    // 旅選択変更時
+    async function onTripChange() {
+      const tripId = Number(document.getElementById('current-trip-select').value);
+      if (!tripId) return;
+      const trip = await db.trips.get(tripId);
+      if (trip) {
+        document.getElementById('current-currency-badge').innerText = trip.currency;
+      }
+      await renderAll();
+    }
+
+    // モーダル開閉ヘルパー
+    function openModal(id) { document.getElementById(id).classList.remove('hidden'); document.getElementById(id).classList.add('flex'); }
+    function closeModal(id) { document.getElementById(id).classList.add('hidden'); document.getElementById(id).classList.remove('flex'); }
+
+    // 新規旅追加
+    function openNewTripModal() { openModal('modal-trip'); }
+    async function saveNewTrip() {
+      const name = document.getElementById('new-trip-name').value.trim();
+      const currency = document.getElementById('new-trip-currency').value;
+      if (!name) return alert('旅の名称を入力してください');
+      
+      const newId = await db.trips.add({ name, currency });
+      closeModal('modal-trip');
+      document.getElementById('new-trip-name').value = '';
+      await loadTripsSelect();
+      document.getElementById('current-trip-select').value = newId;
+      await onTripChange();
+    }
+
+    // ポーカーログ追加モーダル表示
+    async function openPokerLogModal(editId = null) {
+      const tripId = Number(document.getElementById('current-trip-select').value);
+      const trip = await db.trips.get(tripId);
+      if (!trip) return alert('旅を選択してください');
+
+      document.getElementById('modal-trip-label').innerText = trip.name;
+      document.getElementById('modal-currency-label').innerText = trip.currency;
+      document.getElementById('poker-edit-id').value = editId || '';
+
+      if (editId) {
+        document.getElementById('poker-modal-title').innerText = 'ポーカーログ編集';
+        const log = await db.poker_logs.get(Number(editId));
+        if (log) {
+          document.getElementById('poker-type').value = log.type;
+          document.getElementById('poker-hours').value = log.hours;
+          document.getElementById('poker-sb').value = log.sb || '';
+          document.getElementById('poker-bb').value = log.bb || '';
+          document.getElementById('poker-buyin').value = log.buyin;
+          document.getElementById('poker-cashout').value = log.cashout;
+        }
+      } else {
+        document.getElementById('poker-modal-title').innerText = 'ポーカーログ入力';
+        document.getElementById('poker-type').value = 'Cash';
+        document.getElementById('poker-hours').value = '';
+        document.getElementById('poker-sb').value = '';
+        document.getElementById('poker-bb').value = '';
+        document.getElementById('poker-buyin').value = '';
+        document.getElementById('poker-cashout').value = '';
+      }
+
+      toggleGameTypeFields();
+      openModal('modal-poker');
+    }
+
+    function toggleGameTypeFields() {
+      const type = document.getElementById('poker-type').value;
+      const rateInputs = document.getElementById('rate-inputs');
+      if (type === 'Cash') {
+        rateInputs.classList.remove('hidden');
+      } else {
+        rateInputs.classList.add('hidden');
+      }
+    }
+
+    // ポーカーログ保存 (新規 & 編集)
+    async function savePokerLog() {
+      const editId = document.getElementById('poker-edit-id').value;
+      const tripId = Number(document.getElementById('current-trip-select').value);
+      const trip = await db.trips.get(tripId);
+
+      const type = document.getElementById('poker-type').value;
+      const hours = Number(document.getElementById('poker-hours').value);
+      const sb = Number(document.getElementById('poker-sb').value) || 0;
+      const bb = Number(document.getElementById('poker-bb').value) || 0;
+      const buyin = Number(document.getElementById('poker-buyin').value);
+      const cashout = Number(document.getElementById('poker-cashout').value);
+
+      if (!hours || buyin < 0 || cashout < 0) return alert('正確な数値を入力してください');
+      if (type === 'Cash' && bb <= 0) return alert('BBレートを入力してください');
+
       const profit = cashout - buyin;
 
-      await db.poker_logs.add({
+      // Cash WinRate(bb/100) 計算ロジック
+      // 1時間30ハンド -> 総ハンド = hours * 30
+      // WinRate = (profit / bb) / (hours * 30) * 100
+      let winRate = 0;
+      if (type === 'Cash' && bb > 0 && hours > 0) {
+        const totalHands = hours * 30;
+        const totalBBProfit = profit / bb;
+        winRate = (totalBBProfit / totalHands) * 100;
+      }
+
+      const logData = {
+        tripId,
+        date: editId ? (await db.poker_logs.get(Number(editId))).date : new Date().toISOString(),
+        type,
+        hours,
+        sb,
+        bb,
+        buyin,
+        cashout,
+        profit,
+        winRate,
+        currency: trip.currency
+      };
+
+      if (editId) {
+        await db.poker_logs.update(Number(editId), logData);
+      } else {
+        await db.poker_logs.add(logData);
+      }
+
+      closeModal('modal-poker');
+      await renderAll();
+    }
+
+    // 外貨両替記録
+    function openExchangeModal() { openModal('modal-exchange'); }
+    async function saveExchangeLog() {
+      const fromCurr = document.getElementById('ex-from-curr').value;
+      const fromAmount = Number(document.getElementById('ex-from-amount').value);
+      const toCurr = document.getElementById('ex-to-curr').value;
+      const toAmount = Number(document.getElementById('ex-to-amount').value);
+
+      if (!fromAmount || !toAmount || fromCurr === toCurr) {
+        return alert('正しい両替通貨と金額を入力してください');
+      }
+
+      await db.exchanges.add({
         date: new Date().toISOString(),
-        type, buyin, cashout, profit
+        fromCurr,
+        fromAmount,
+        toCurr,
+        toAmount
       });
 
-      e.target.reset();
-      renderLogs();
-    });
+      closeModal('modal-exchange');
+      document.getElementById('ex-from-amount').value = '';
+      document.getElementById('ex-to-amount').value = '';
+      await renderAll();
+    }
 
-    // 3. ログの描画 & 集計
-    async function renderLogs() {
+    // 初期残高設定の読み込み＆保存
+    async function loadInitialSettingsInputs() {
+      const jpy = (await db.settings.get('init_jpy'))?.value || 0;
+      const krw = (await db.settings.get('init_krw'))?.value || 0;
+      const usd = (await db.settings.get('init_usd'))?.value || 0;
+      document.getElementById('init-jpy').value = jpy;
+      document.getElementById('init-krw').value = krw;
+      document.getElementById('init-usd').value = usd;
+    }
+
+    async function saveInitialBalances() {
+      const jpy = Number(document.getElementById('init-jpy').value) || 0;
+      const krw = Number(document.getElementById('init-krw').value) || 0;
+      const usd = Number(document.getElementById('init-usd').value) || 0;
+      await db.settings.put({ key: 'init_jpy', value: jpy });
+      await db.settings.put({ key: 'init_krw', value: krw });
+      await db.settings.put({ key: 'init_usd', value: usd });
+      alert('初期残高を保存しました');
+      await renderAll();
+    }
+
+    // 削除処理
+    async function deletePokerLog(id) {
+      if (confirm('このログを削除しますか？')) {
+        await db.poker_logs.delete(id);
+        await renderAll();
+      }
+    }
+
+    // ==================== 集計 ＆ 描画統括 ====================
+    async function renderAll() {
+      await calculateBalances();
+      await renderLogList();
+      await renderChart();
+    }
+
+    // 残高自動計算
+    async function calculateBalances() {
+      const initJpy = (await db.settings.get('init_jpy'))?.value || 0;
+      const initKrw = (await db.settings.get('init_krw'))?.value || 0;
+      const initUsd = (await db.settings.get('init_usd'))?.value || 0;
+
+      let balJpy = initJpy;
+      let balKrw = initKrw;
+      let balUsd = initUsd;
+
+      // ポーカー収支加算
+      const logs = await db.poker_logs.toArray();
+      logs.forEach(l => {
+        if (l.currency === 'JPY') balJpy += l.profit;
+        if (l.currency === 'KRW') balKrw += l.profit;
+        if (l.currency === 'USD') balUsd += l.profit;
+      });
+
+      // 両替反映
+      const exes = await db.exchanges.toArray();
+      exes.forEach(e => {
+        if (e.fromCurr === 'JPY') balJpy -= e.fromAmount;
+        if (e.fromCurr === 'KRW') balKrw -= e.fromAmount;
+        if (e.fromCurr === 'USD') balUsd -= e.fromAmount;
+
+        if (e.toCurr === 'JPY') balJpy += e.toAmount;
+        if (e.toCurr === 'KRW') balKrw += e.toAmount;
+        if (e.toCurr === 'USD') balUsd += e.toAmount;
+      });
+
+      document.getElementById('bal-jpy').innerText = `¥${balJpy.toLocaleString()}`;
+      document.getElementById('bal-krw').innerText = `₩${balKrw.toLocaleString()}`;
+      document.getElementById('bal-usd').innerText = `$${balUsd.toLocaleString()}`;
+    }
+
+    // 直近ログリスト描画
+    async function renderLogList() {
       const logs = await db.poker_logs.reverse().toArray();
       const listEl = document.getElementById('log-list');
       listEl.innerHTML = '';
 
-      let totalProfitKRW = 0;
-      logs.forEach(log => {
-        totalProfitKRW += log.profit;
-        const color = log.profit >= 0 ? 'text-emerald-400' : 'text-rose-400';
-        listEl.innerHTML += `
-          <div class="flex justify-between border-b border-slate-700/50 pb-2">
-            <span>${log.type}</span>
-            <span class="${color} font-bold">${log.profit > 0 ? '+' : ''}${log.profit.toLocaleString()} ₩</span>
-          </div>`;
-      });
+      if (logs.length === 0) {
+        listEl.innerHTML = '<div class="text-xs text-slate-500 text-center py-2">ログはまだありません</div>';
+        return;
+      }
 
-      document.getElementById('bal-krw').innerText = totalProfitKRW.toLocaleString();
+      for (const log of logs) {
+        const trip = await db.trips.get(log.tripId);
+        const tripName = trip ? trip.name : '不明な旅';
+        const isWin = log.profit >= 0;
+        const color = isWin ? 'text-emerald-400' : 'text-rose-400';
+        const dateStr = new Date(log.date).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+        let detailText = `${log.type} (${log.hours}h)`;
+        if (log.type === 'Cash' && log.bb > 0) {
+          detailText += ` | ${log.winRate.toFixed(1)} bb/100`;
+        }
+
+        listEl.innerHTML += `
+          <div class="bg-slate-900/60 p-3 rounded-xl border border-slate-700/60 flex justify-between items-center">
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="font-bold text-slate-200">${tripName}</span>
+                <span class="text-[10px] bg-slate-800 px-1.5 py-0.5 rounded text-slate-400">${log.currency}</span>
+              </div>
+              <div class="text-xs text-slate-400 mt-0.5">${detailText} • ${dateStr}</div>
+            </div>
+            <div class="text-right">
+              <div class="${color} font-black text-base">${isWin ? '+' : ''}${log.profit.toLocaleString()}</div>
+              <div class="flex gap-2 justify-end text-xs mt-1">
+                <button onclick="openPokerLogModal(${log.id})" class="text-indigo-400 hover:underline">編集</button>
+                <button onclick="deletePokerLog(${log.id})" class="text-rose-400 hover:underline">削除</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }
     }
 
-    renderLogs();
+    // グラフタブ切り替え
+    function switchGraphTab(tab) {
+      activeChartTab = tab;
+      ['jpy', 'trip', 'winrate'].forEach(t => {
+        const btn = document.getElementById(`tab-btn-${t}`);
+        if (t === tab) {
+          btn.className = "flex-1 py-2 rounded-lg font-bold transition bg-indigo-600 text-white shadow";
+        } else {
+          btn.className = "flex-1 py-2 rounded-lg font-bold transition text-slate-400 hover:text-slate-200";
+        }
+      });
+      renderChart();
+    }
 
-    // Service Workerの登録
+    // グラフ描画メイン処理
+    async function renderChart() {
+      const ctx = document.getElementById('mainChart').getContext('2d');
+      if (chartInstance) chartInstance.destroy();
+
+      let labels = [];
+      let data = [];
+      let labelName = '';
+      let borderColor = '#10b981';
+
+      if (activeChartTab === 'jpy') {
+        // 通算収支(JPY): JPYポーカー収支 ＋ JPY両替記録 の累積
+        labelName = '通算 JPY 収支/流動';
+        borderColor = '#10b981';
+        
+        // JPYに関連するイベント収集
+        const jpyLogs = (await db.poker_logs.where('currency').equals('JPY').toArray())
+          .map(l => ({ date: l.date, amount: l.profit }));
+        
+        const exchanges = await db.exchanges.toArray();
+        const jpyExchanges = [];
+        exchanges.forEach(e => {
+          if (e.toCurr === 'JPY') jpyExchanges.push({ date: e.date, amount: e.toAmount });
+          if (e.fromCurr === 'JPY') jpyExchanges.push({ date: e.date, amount: -e.fromAmount });
+        });
+
+        const timeline = [...jpyLogs, ...jpyExchanges].sort((a,b) => new Date(a.date) - new Date(b.date));
+        
+        let cum = 0;
+        timeline.forEach((item, idx) => {
+          cum += item.amount;
+          labels.push(`N${idx+1}`);
+          data.push(cum);
+        });
+
+      } else if (activeChartTab === 'trip') {
+        // 今旅の収支
+        const tripId = Number(document.getElementById('current-trip-select').value);
+        const trip = await db.trips.get(tripId);
+        const curr = trip ? trip.currency : '';
+        labelName = `今旅の収支 (${curr})`;
+        borderColor = '#3b82f6';
+
+        const logs = (await db.poker_logs.where('tripId').equals(tripId).toArray())
+          .sort((a,b) => new Date(a.date) - new Date(b.date));
+
+        let cum = 0;
+        logs.forEach((l, idx) => {
+          cum += l.profit;
+          labels.push(`S${idx+1}`);
+          data.push(cum);
+        });
+
+      } else if (activeChartTab === 'winrate') {
+        // Cash WinRate (bb/100)
+        labelName = 'Cash WinRate (bb/100)';
+        borderColor = '#f59e0b';
+
+        const logs = (await db.poker_logs.where('type').equals('Cash').toArray())
+          .sort((a,b) => new Date(a.date) - new Date(b.date));
+
+        logs.forEach((l, idx) => {
+          labels.push(`S${idx+1}`);
+          data.push(Number(l.winRate.toFixed(1)));
+        });
+      }
+
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels.length ? labels : ['なし'],
+          datasets: [{
+            label: labelName,
+            data: data.length ? data : [0],
+            borderColor: borderColor,
+            backgroundColor: borderColor + '22',
+            fill: true,
+            tension: 0.3,
+            borderWidth: 2
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: true, labels: { color: '#94a3b8', font: { size: 10 } } }
+          },
+          scales: {
+            x: { ticks: { color: '#64748b' }, grid: { color: '#334155' } },
+            y: { ticks: { color: '#64748b' }, grid: { color: '#334155' } }
+          }
+        }
+      });
+    }
+
+    // Service Worker 登録
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js');
+      navigator.serviceWorker.register('sw.js').catch(()=>{});
     }
   </script>
 </body>
